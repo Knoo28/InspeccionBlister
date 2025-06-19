@@ -2,6 +2,8 @@ import customtkinter as ctk
 from tkinter import messagebox, filedialog
 from PIL import Image, ImageTk
 import cv2
+from tkcalendar import DateEntry
+import time
 import pandas as pd
 from datetime import datetime
 import os
@@ -26,6 +28,13 @@ selected_camera_index = 0
 min_video_width = 640
 min_video_height = 480
 
+def salir(ventana):
+    global running, cap
+    running = False
+    if cap is not None:
+        cap.release()
+    ventana.destroy()
+
 def crear_dashboard_lateral():
     global root, label_video, detected_labels_text, counter_text, status_text, running, cap, selected_camera_index, combo_camaras
     global current_full_count, current_empty_count, current_status, archivo_excel, tabla_historial_text
@@ -43,6 +52,16 @@ def crear_dashboard_lateral():
     # Layout: frame izquierdo (dashboard), frame derecho (contenido)
     frame_dashboard = ctk.CTkFrame(root, width=200)
     frame_dashboard.pack(side="left", fill="y")
+
+    label_reloj = ctk.CTkLabel(frame_dashboard, text="", font=("Segoe UI", 16, "bold"))
+    label_reloj.pack(pady=20)
+
+    def actualizar_reloj():
+        hora_actual = time.strftime("%H:%M:%S")
+        label_reloj.configure(text=hora_actual)
+        label_reloj.after(1000, actualizar_reloj)
+
+    actualizar_reloj()
 
     frame_contenido = ctk.CTkFrame(root)
     frame_contenido.pack(side="right", fill="both", expand=True, padx=10, pady=10)
@@ -139,7 +158,7 @@ def crear_dashboard_lateral():
         try:
             df_guardar.to_excel(archivo_excel, index=False)
             messagebox.showinfo("Éxito", f"Datos guardados correctamente en Excel:\n{archivo_excel}")
-            cargar_historial()  # Actualizar tabla historial
+            filtrar_historial()  # Actualizar tabla historial
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo guardar el archivo Excel.\n{e}")
 
@@ -208,17 +227,33 @@ def crear_dashboard_lateral():
     frames["Historial"] = frame_historial
     ctk.CTkLabel(frame_historial, text="Historial de Detecciones", font=("Segoe UI", 20, "bold")).pack(pady=10)
 
-    tabla_historial_text = ctk.CTkTextbox(frame_historial, width=880, height=580, font=("Consolas", 12))
-    tabla_historial_text.pack(padx=15, pady=10, fill="both", expand=True)
+    # Entrada para filtro por fecha
+    filtro_fecha_entry = DateEntry(frame_historial, date_pattern='yyyy-MM-dd', width=15)
+    filtro_fecha_entry.pack(pady=(0, 10), padx=10, anchor="w")
 
-    def cargar_historial():
+    def filtrar_historial():
+        filtro = filtro_fecha_entry.get().strip()
         tabla_historial_text.configure(state="normal")
         tabla_historial_text.delete("1.0", "end")
 
         if os.path.exists(archivo_excel):
             try:
                 df = pd.read_excel(archivo_excel)
-                tabla_historial_text.insert("end", df.to_string(index=False))
+                # Convertir columna a datetime para mejor comparación
+                df["FechaHora"] = pd.to_datetime(df["FechaHora"], errors='coerce')
+
+                if filtro:
+                    try:
+                        filtro_dt = pd.to_datetime(filtro)
+                        df_filtrado = df[df["FechaHora"].dt.date == filtro_dt.date()]
+                        if df_filtrado.empty:
+                            tabla_historial_text.insert("end", f"No se encontraron registros para la fecha {filtro}.")
+                        else:
+                            tabla_historial_text.insert("end", df_filtrado.to_string(index=False))
+                    except Exception as e:
+                        tabla_historial_text.insert("end", f"Formato de fecha inválido. Use YYYY-MM-DD.\n{e}")
+                else:
+                    tabla_historial_text.insert("end", df.to_string(index=False))
             except Exception as e:
                 tabla_historial_text.insert("end", f"Error al cargar historial:\n{e}")
         else:
@@ -226,7 +261,13 @@ def crear_dashboard_lateral():
 
         tabla_historial_text.configure(state="disabled")
 
-    cargar_historial()
+    ctk.CTkButton(frame_historial, text="Filtrar por Fecha", command=filtrar_historial).pack(pady=(0, 10))
+
+    tabla_historial_text = ctk.CTkTextbox(frame_historial, width=880, height=540, font=("Consolas", 12))
+    tabla_historial_text.pack(padx=15, pady=10, fill="both", expand=True)
+
+    # Cargar todo el historial inicialmente
+    filtrar_historial()
 
     # --------------------- FRAME Configuración ------------------------
     frame_config = ctk.CTkFrame(frame_contenido)
@@ -272,7 +313,7 @@ def crear_dashboard_lateral():
         global archivo_excel
         archivo_excel = archivo_path_var.get()
         messagebox.showinfo("Configuración", "Configuración guardada correctamente.")
-        cargar_historial()  # Actualiza historial con posible nuevo archivo
+        filtrar_historial()  # Actualiza historial con posible nuevo archivo
 
     ctk.CTkButton(frame_config, text="Guardar Configuración", command=guardar_configuracion).pack()
 
@@ -290,11 +331,9 @@ def crear_dashboard_lateral():
     mostrar_frame("Detección")
     update_frame()
 
-    root.protocol("WM_DELETE_WINDOW", cerrar_ventana)
+    root.protocol("WM_DELETE_WINDOW", lambda: salir(root))
     root.mainloop()
 
-def cerrar_ventana():
-    global running
-    running = False
-    liberar_camara()
-    root.destroy()
+# Inicia la aplicación
+if __name__ == "__main__":
+    crear_dashboard_lateral()
